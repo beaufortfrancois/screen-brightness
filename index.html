@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Screen Brightness API</title>
+    <script
+      src="https://www.w3.org/Tools/respec/respec-w3c"
+      async
+      class="remove"
+    ></script>
+    <script class="remove">
+      var respecConfig = {
+        specStatus: "ED",
+        shortName: "screen-brightness",
+        editors: [
+          {
+            name: "François Beaufort",
+            company: "Google LLC",
+            companyURL: "https://www.google.com/",
+            w3cid: 81174,
+          },
+        ],
+        github: "https://github.com/beaufortfrancois/screen-brightness/",
+        group: "das",
+        testSuiteURI: "https://wpt.live/screen-brightness/",
+        implementationReportURI: "https://www.w3.org/wiki/DAS/Implementations",
+        xref: {
+          profile: "web-platform",
+          specs: ["permissions", "permissions-policy"],
+        },
+      };
+    </script>
+  </head>
+  <body>
+    <section id="abstract">
+      <p>
+        This document specifies an API that allows web applications to increase
+        the brightness of a device's screen under certain conditions.
+      </p>
+    </section>
+    <section id="sotd"></section>
+    <section class="informative">
+      <h2>Introduction</h2>
+      <p>
+        Allowing web applications to request an increase to the display's
+        brightness would help address the following use cases:
+      </p>
+      <ul>
+        <li>
+          a user scans a QR/barcode under various lighting conditions, in which
+          case boosting the screen brightness creates more contrast.
+        </li>
+        <li>
+          illuminate a user's facial features, improving the viability of
+          certain web applications that rely on the front facing camera (e.g.,
+          make up mirror style apps, and applications that can scan people's
+          facial features to perform some particular action).
+        </li>
+      </ul>
+      <p>
+        The proposed Screen Brightness API extends the
+        <code><dfn data-cite="CSSOM-View#screen">Screen</dfn></code> interface
+        with a new operation, inspired by the [[screen-wake-lock]] API.
+      </p>
+    </section>
+    <section>
+      <h3>Policy control</h3>
+      <p>
+        The Screen Brightness API defines a [=policy-controlled feature=]
+        identified by the string `"screen-brightness"`. Its [=default
+        allowlist=] is `["self"]`.
+      </p>
+      <aside class="note">
+        <p>
+          The <a>default allowlist</a> of `["self"]` allows screen brightness
+          increase usage in same-origin nested frames but prevents third-party
+          content from increasing screen brightness.
+        </p>
+        <p>
+          Third-party usage can be selectively enabled by adding
+          `allow="screen-brightness"` attribute to the frame container element:
+        </p>
+        <pre
+          class="example html"
+          title="Enabling screen brightness on remote content"
+        >
+          &lt;iframe src="https://third-party.com" allow="screen-brightness"/&gt;&lt;/iframe&gt;
+        </pre>
+        <p>
+          Alternatively, the Screen Brightness API can be disabled completely by
+          specifying the permissions policy in a HTTP response header:
+        </p>
+        <pre class="example http" title="Feature Policy over HTTP">
+          Permissions-Policy: {"screen-brightness": []}
+        </pre>
+        <p>See [[[PERMISSIONS-POLICY]]] for more details.</p>
+      </aside>
+    </section>
+    <section>
+      <h3>Concepts</h3>
+      <p>
+        The <a>task source</a> for the <a>tasks</a> mentioned in this
+        specification is the <dfn>screen brightness task source</dfn>.
+      </p>
+    </section>
+    <section data-dfn-for="Document">
+      <h2>Extensions to the `Document` interface</h2>
+      <section>
+        <h3>Internal slots</h3>
+        <table class="simple">
+          <thead>
+            <tr>
+              <th>Internal slot</th>
+              <th>Initial value</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <dfn>[[\ActiveBrightnessSentinels]]</dfn>
+              </td>
+              <td>An empty list.</td>
+              <td>
+                A <a>list</a> of {{ScreenBrightnessSentinel}} objects associated
+                with this {{Document}}.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </section>
+    <section data-dfn-for="Screen">
+      <h2>Extensions to the `Screen` interface</h2>
+      <p>
+        The [[[CSSOM-View]]] specification defines the
+        <code><dfn data-cite="CSSOM-View#screen">Screen</dfn></code> interface,
+        which this specification extends:
+      </p>
+      <pre class="idl">
+        [SecureContext]
+        partial interface Screen {
+          Promise&lt;ScreenBrightnessSentinel&gt; requestBrightnessIncrease();
+        };
+      </pre>
+      <section>
+        <h3>The <dfn>requestBrightnessIncrease()</dfn> method</h3>
+        <p>The <code>requestBrightnessIncrease()</code> method steps are:</p>
+        <ol class="algorithm">
+          <li>
+            Let |document:Document| be [=this=]'s [=relevant settings object=]'s
+            [=associated Document=].
+          </li>
+          <li>
+            If |document| is not [=allowed to use=] the [=policy-controlled
+            feature=] named "`screen-brightness`", return [=a promise rejected
+            with=] a {{"NotAllowedError"}} {{DOMException}}.
+          </li>
+          <li>
+            If the |document|'s [=Document/browsing context=] is `null`, return
+            [=a promise rejected with=] a {{"NotAllowedError"}}
+            {{DOMException}}.
+          </li>
+          <li>
+            If |document| is not [=Document/fully active=], return [=a promise
+            rejected with=] a {{"NotAllowedError"}} {{DOMException}}.
+          </li>
+          <li>
+            If |document| does not have [=transient activation=], return [=a
+            promise rejected with=] a {{"NotAllowedError"}} {{DOMException}}.
+          </li>
+          <li>Let |promise:Promise| be [=a new promise=].</li>
+          <li>
+            Run the following steps <a>in parallel</a>:
+            <ol>
+              <li>
+                <a>Queue a global task</a> on the
+                <a>screen brightness task source</a> given |document|'s
+                <a>relevant global object</a> to run these steps:
+                <ol>
+                  <li>
+                    If |document|'s [=Document/visibility state=] is "`hidden`",
+                    then:
+                    <ol>
+                      <li>
+                        Reject |promise| with a {{"NotAllowedError"}}
+                        {{DOMException}}.
+                      </li>
+                      <li>Abort these steps.</li>
+                    </ol>
+                  </li>
+                  <li>
+                    If |document|.{{Document/[[ActiveBrightnessSentinels]]}}
+                    [=list/is empty=], then invoke the following steps
+                    <a>in parallel</a>:
+                    <ol>
+                      <li>
+                        Ask the underlying operating system to increase the
+                        brightness screen.
+                      </li>
+                    </ol>
+                  </li>
+                  <li>
+                    Let |sentinel:ScreenBrightnessSentinel| be a new
+                    {{ScreenBrightnessSentinel}} object.
+                  </li>
+                  <li>
+                    [=List/Append=] |sentinel| to
+                    |document|.{{Document/[[ActiveBrightnessSentinels]]}}.
+                  </li>
+                  <li>Resolve |promise| with |sentinel|.</li>
+                </ol>
+              </li>
+            </ol>
+          </li>
+          <li>Return |promise|.</li>
+        </ol>
+      </section>
+    </section>
+    <section data-dfn-for="ScreenBrightnessSentinel">
+      <h2>The <dfn>ScreenBrightnessSentinel</dfn> interface</h2>
+      <pre class="idl">
+        [SecureContext, Exposed=(Window)]
+        interface ScreenBrightnessSentinel : EventTarget {
+          readonly attribute boolean released;
+          Promise&lt;undefined&gt; release();
+          attribute EventHandler onrelease;
+        };
+      </pre>
+      <p>
+        A {{ScreenBrightnessSentinel}} object provides a handle to a screen
+        brightness increase request. Releasing all {{ScreenBrightnessSentinel}}
+        instances tell the underlying operating system to use normal screen
+        brightness policy.
+      </p>
+      <aside class="note">
+        See <a>auto-releasing screen brightness increase requests</a>,
+        <a>handling document loss of full activity</a> and
+        <a>handling document loss of visibility</a> for circumstances under
+        which a given screen brightness increase request may be released by the
+        <a>user agent</a>.
+      </aside>
+      <section>
+        <h3>Internal slots</h3>
+        <p>
+          {{ScreenBrightnessSentinel}} instances are created with the following
+          <a
+            data-cite="ECMASCRIPT#sec-object-internal-methods-and-internal-slots"
+            >internal slots</a
+          >:
+        </p>
+        <table class="simple">
+          <thead>
+            <tr>
+              <th>Internal slot</th>
+              <th>Initial value</th>
+              <th>Description (non-normative)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <dfn>[[\Released]]</dfn>
+              </td>
+              <td>`false`</td>
+              <td>
+                Whether the given {{ScreenBrightnessSentinel}} has been
+                released.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h3>The <dfn>released</dfn> attribute</h3>
+        <p>
+          The {{ScreenBrightnessSentinel/released}} getter steps are to return
+          [=this=].{{ScreenBrightnessSentinel/[[Released]]}}.
+        </p>
+        <aside class="note">
+          Once a {{ScreenBrightnessSentinel}} is released,
+          {{ScreenBrightnessSentinel/released}} becomes `true`, and the value
+          never changes again.
+        </aside>
+      </section>
+      <section>
+        <h3>The <dfn>release()</dfn> method</h3>
+        <p>The {{ScreenBrightnessSentinel/release()}} method steps are:</p>
+        <ol class="algorithm">
+          <li>
+            If <a>this</a>'s {{ScreenBrightnessSentinel/[[Released]]}} is
+            `false`, then run
+            <a>release a screen brightness increase request</a> with
+            |document:Document| set to [=this=]'s [=relevant settings object=]'s
+            [=associated Document=] and |sentinel:ScreenBrightnessSentinel| set
+            to <a>this</a>.
+          </li>
+          <li>Return <a>a promise resolved with</a> `undefined`.</li>
+        </ol>
+      </section>
+      <section>
+        <h3>The <dfn>onrelease</dfn> attribute</h3>
+        <p>
+          The {{ScreenBrightnessSentinel/onrelease}} attribute is an
+          <a>event handler</a> whose corresponding
+          <a>event handler event type</a> is <code>release</code>.
+        </p>
+        <p>
+          It is used to notify scripts that a given {{ScreenBrightnessSentinel}}
+          object's handle has been released, either due to the
+          {{ScreenBrightnessSentinel/release()}} method being called or because
+          the screen brightness increase request was released by the
+          <a>user agent</a>.
+        </p>
+        <aside class="note">
+          A {{ScreenBrightnessSentinel}} object's handle being released does not
+          necessarily mean the screen brightness was reduced. See
+          <a>release a screen brightness increase request</a>.
+        </aside>
+      </section>
+      <section>
+        <h3>Garbage collection</h3>
+        <p>
+          While a {{ScreenBrightnessSentinel}} object has one or more event
+          listeners registered for "release", and the
+          {{ScreenBrightnessSentinel}} object hasn't already been released,
+          there MUST be a strong reference from the {{Window}} object that the
+          {{ScreenBrightnessSentinel}} object's constructor was invoked from to
+          the {{ScreenBrightnessSentinel}} object itself.
+        </p>
+        <p>
+          While there is a task queued by an {{ScreenBrightnessSentinel}} object
+          on the
+          <a>screen brightness task source</a>, there MUST be a strong reference
+          from the {{Window}} object that the {{ScreenBrightnessSentinel}}
+          object's constructor was invoked from to that
+          {{ScreenBrightnessSentinel}} object.
+        </p>
+      </section>
+    </section>
+    <section>
+      <h2>Managing screen brightness increase requests</h2>
+      <section>
+        <h3>
+          <dfn>Auto-releasing screen brightness increase requests</dfn>
+        </h3>
+        <p>
+          A user agent may <a>release a screen brightness increase request</a>
+          at any time. For example, when:
+        </p>
+        <ul>
+          <li>Battery is considered low and discharging.</li>
+          <li>
+            The user turns on some kind of device power conservation mode.
+          </li>
+          <li>
+            The operating system is configured to dim or turn off the screen
+            based on the user presence state.
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h3>
+          <dfn>Handling document loss of full activity</dfn>
+        </h3>
+        <p>
+          When a {{Document}} |document:Document| becomes no longer
+          [=Document/fully active=], the user agent must run these steps:
+        </p>
+        <ol class="algorithm">
+          <li>
+            [=list/For each=] |sentinel:ScreenBrightnessSentinel| in
+            |document|.{{Document/[[ActiveBrightnessSentinels]]}}:
+            <ol>
+              <li>
+                Run <a>release a screen brightness increase request</a> with
+                |document| and |sentinel|.
+              </li>
+            </ol>
+          </li>
+        </ol>
+        <aside class="note">
+          Only documents presented to the user, thus with an associated
+          [=Document/browsing context=] can be <a>active documents</a>, so the
+          above steps are only relevant for these.
+        </aside>
+      </section>
+      <section>
+        <h3>
+          <dfn>Handling document loss of visibility</dfn>
+        </h3>
+        <p>
+          This specification defines the following [=page visibility change
+          steps=] with [=Document/visibility state=] |state| and
+          |document:Document|:
+        </p>
+        <ol class="algorithm">
+          <li>If |state| is not "`hidden`", abort these steps.</li>
+          <li>
+            [=list/For each=] |sentinel:ScreenBrightnessSentinel| in
+            |document|.{{Document/[[ActiveBrightnessSentinels]]}}:
+            <ol>
+              <li>
+                Run <a>release a screen brightness increase request</a> with
+                |document| and |sentinel|.
+              </li>
+            </ol>
+          </li>
+        </ol>
+      </section>
+      <section>
+        <h3>Release screen brightness increase request algorithm</h3>
+        <p>
+          To <dfn>release a screen brightness increase request</dfn> for a given
+          |document:Document| and |sentinel:ScreenBrightnessSentinel| run these
+          steps:
+        </p>
+        <ol class="algorithm">
+          <li>
+            If |document|.{{Document/[[ActiveBrightnessSentinels]]}} does not
+            contain |sentinel|, abort these steps.
+          </li>
+          <li>
+            Remove |sentinel| from
+            |document|.{{Document/[[ActiveBrightnessSentinels]]}}.
+          </li>
+          <li>
+            Tell the underlying operating system that normal screen brightness
+            policy should be used.
+          </li>
+          <li>
+            Set |sentinel|'s {{ScreenBrightnessSentinel/[[Released]]}} to
+            `true`.
+          </li>
+          <li><a>Fire an event</a> named "`release`" at |sentinel|.</li>
+        </ol>
+      </section>
+    </section>
+    <section>
+      <h2>Security and privacy considerations</h2>
+      <p>
+        Active screen brightness increase requests will cause the display to
+        operate at higher power levels than they otherwise would. This will lead
+        to faster battery depletion. It is of particular concern for mobile
+        devices, which often don't have a stationary power source readily
+        available. Complete battery depletion at an unexpected time can lead to
+        inability of the user to make or receive calls and use network services,
+        including the emergency call service.
+      </p>
+      <p>
+        Implementations MAY ignore requests for screen brightness increase if,
+        for example, the battery capacity is low, or the user has put their
+        device in a power-saving mode.
+      </p>
+    </section>
+    <section id="examples" class="informative">
+      <h2>Examples</h2>
+      <pre
+        class="example js"
+        title="Increase screen brightness for 5 seconds when user clicks button"
+      >
+        const button = document.querySelector("button");
+
+        button.onclick = async () =&gt; {
+          try {
+            // Try increasing screen brightness for 5 seconds only.
+            const sentinel = await screen.requestBrightnessIncrease();
+            setTimeout(() =&gt; sentinel.release(), 5000);
+          } catch(error) {
+            // The request failed. Argh ;(
+          }
+        }
+      </pre>
+      <pre
+        class="example js"
+        title="Enable and disable a button that increases screen brightness on click"
+      >
+        const button = document.querySelector("button");
+
+        button.onclick = async () =&gt; {
+          // Disable button when user clicks to prevent multiple calls.
+          button.disabled = true;
+          try {
+            // Try increasing screen brightness.
+            const sentinel = await screen.requestBrightnessIncrease();
+            sentinel.onrelease = () => {
+              // Re-enable button when sentinel is released.
+              button.disabled = false;
+            };
+          } catch(error) {
+            // Re-enable button when request failed.
+            button.disabled = false;
+          }
+        }
+      </pre>
+    </section>
+    <section id="conformance">
+      <p>
+        This specification defines conformance criteria for a single product: a
+        <dfn>user agent</dfn> that implements the interfaces that it contains.
+      </p>
+    </section>
+    <section id="idl-index" class="appendix"></section>
+    <section class="appendix informative" id="acknowledgments">
+      <h2>Acknowledgments</h2>
+      <p>
+        We would like to offer our sincere thanks to TODO for their
+        contributions to this work.
+      </p>
+    </section>
+  </body>
+</html>
